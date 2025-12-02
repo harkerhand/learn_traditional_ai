@@ -1,0 +1,8 @@
+[package]
+name = "mlp-mnist"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tch = { version = "0.22.0" }
+ndarray = { version = "0.17.1", features = ["serde"] }
