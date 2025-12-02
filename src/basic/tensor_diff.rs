@@ -3,8 +3,8 @@ use ndarray::{ArrayBase, Axis, Dim, IxDyn, IxDynImpl, OwnedRepr};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-type NdTensor = ArrayBase<OwnedRepr<f64>, Dim<IxDynImpl>>;
-type SharedTensor = Rc<RefCell<Tensor>>;
+pub type NdTensor = ArrayBase<OwnedRepr<f64>, Dim<IxDynImpl>>;
+pub type SharedTensor = Rc<RefCell<Tensor>>;
 
 
 pub struct Tensor {
@@ -177,6 +177,28 @@ impl Tensor {
     }
 }
 
+impl From<tch::Tensor> for Tensor {
+    fn from(value: tch::Tensor) -> Self {
+        let kind = value.kind();
+        assert_eq!(kind, tch::Kind::Float, "Only Float kind is supported");
+        let size = value.numel();
+        let mut vec = vec![0.0f32; size];
+        value.copy_data(&mut vec, size);
+        let array_d = ArrayBase::from_shape_vec(
+            value.size().iter().map(|&d| d as usize).collect::<Vec<_>>(),
+            vec.into_iter().map(|x| x as f64).collect(),
+        )
+            .unwrap();
+        let dim = array_d.raw_dim();
+        Tensor {
+            data: array_d,
+            grad: NdTensor::zeros(dim),
+            children: Vec::new(),
+            backward_fn: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,7 +258,7 @@ mod tests {
     fn test_complex() {
         let x_data = NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![1.0, 2.0, 3.0, 4.0]).unwrap();
         let w_data = NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![1.0, 0.0, 0.0, 1.0]).unwrap();
-        let b_data = NdTensor::from_shape_vec(IxDyn(&[1, 2]), vec![-3.0, -2.0]).unwrap();
+        let b_data = NdTensor::from_shape_vec(IxDyn(&[2]), vec![-3.0, -2.0]).unwrap();
         let m_data = NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![0.5, 1.0, 1.0, 0.5]).unwrap();
         let x = Tensor::new(x_data);
         let w = Tensor::new(w_data);
@@ -264,7 +286,7 @@ mod tests {
         let xw_grad = &xw.borrow().grad; // dl/dxw = dl/dz * dz/dxw = dl/dz
         assert_eq!(xw_grad, &NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![0.0, 0.0, 0.0, 0.125]).unwrap());
         let b_grad = &b.borrow().grad; // dl/db = dl/dz * dz/db = sum over batch of dl/dz
-        assert_eq!(b_grad, &NdTensor::from_shape_vec(IxDyn(&[1, 2]), vec![0.0, 0.125]).unwrap());
+        assert_eq!(b_grad, &NdTensor::from_shape_vec(IxDyn(&[2]), vec![0.0, 0.125]).unwrap());
         let x_grad = &x.borrow().grad; // dl/dx = dl/dxw * dxw/dx = dl/dxw @ W.T
         assert_eq!(x_grad, &NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![0.0, 0.0, 0.0, 0.125]).unwrap());
         let w_grad = &w.borrow().grad; // dl/dw = x.T @ dl/dxw
