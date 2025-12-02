@@ -49,4 +49,15 @@ impl MlpNet {
         let output = add(matmul3, self.fc3_bias.clone());
         output
     }
+
+    pub fn parameters(&self) -> Vec<SharedTensor> {
+        vec![
+            self.fc1_weight.clone(),
+            self.fc1_bias.clone(),
+            self.fc2_weight.clone(),
+            self.fc2_bias.clone(),
+            self.fc3_weight.clone(),
+            self.fc3_bias.clone(),
+        ]
+    }
 }

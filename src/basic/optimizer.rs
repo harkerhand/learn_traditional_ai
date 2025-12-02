@@ -21,9 +21,8 @@ impl SgdOptimizer {
 
     pub fn step(&self) {
         for param in &self.params {
-            let grad = &param.borrow().grad;
             let mut param_mut = param.borrow_mut();
-            param_mut.data -= &(grad * self.learning_rate);
+            param_mut.data = &param_mut.data - &(&param_mut.grad * self.learning_rate);
         }
     }
 }

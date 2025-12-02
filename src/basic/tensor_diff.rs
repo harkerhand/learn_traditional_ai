@@ -24,6 +24,22 @@ impl Tensor {
             backward_fn: None,
         }))
     }
+    pub fn argmax(&self) -> Vec<usize> {
+        let data = &self.data;
+        let mut result = Vec::with_capacity(data.shape()[0]);
+        for row in data.axis_iter(Axis(0)) {
+            let mut max_idx = 0;
+            let mut max_val = f64::NEG_INFINITY;
+            for (idx, &val) in row.iter().enumerate() {
+                if val > max_val {
+                    max_val = val;
+                    max_idx = idx;
+                }
+            }
+            result.push(max_idx);
+        }
+        result
+    }
 }
 
 pub fn add(a: SharedTensor, b: SharedTensor) -> SharedTensor {
@@ -117,6 +133,7 @@ pub fn mean(a: SharedTensor) -> SharedTensor {
 }
 
 pub fn log_softmax_cross_entropy(z: SharedTensor, y: SharedTensor) -> SharedTensor {
+    // println!("{:?}, {:?}", z.borrow().data.raw_dim(), y.borrow().data.raw_dim());
     let z_data = z.borrow().data.clone();
     let y_data = y.borrow().data.clone();
     let batch_size = z_data.shape()[0] as f64;
@@ -197,6 +214,16 @@ impl From<tch::Tensor> for Tensor {
             backward_fn: None,
         }
     }
+}
+
+pub fn to_one_hot(labels: &tch::Tensor, num_classes: i64) -> NdTensor {
+    let labels = labels.to_kind(tch::Kind::Int64);
+    let batch_size = labels.size()[0] as usize;
+    let mut one_hot = NdTensor::zeros(IxDyn(&[batch_size, num_classes as usize]));
+    for (i, class) in labels.iter::<i64>().unwrap().enumerate() {
+        one_hot[[i, class as usize]] = 1.0;
+    }
+    one_hot
 }
 
 #[cfg(test)]

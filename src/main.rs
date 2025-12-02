@@ -1,13 +1,16 @@
 mod basic;
 
+use crate::basic::log_softmax_cross_entropy;
+use std::cell::RefCell;
 use std::fmt::Debug;
+use std::rc::Rc;
 use tch::nn::{Module, OptimizerConfig};
 use tch::vision::dataset::Dataset;
 use tch::Tensor;
 
 const N_CLASSED: i64 = 10;
 const LINEAR_RATE: f64 = 0.01;
-const EPOCHS: i64 = 10;
+const EPOCHS: i64 = 2;
 const HIDDEN_SIZE: i64 = 4;
 
 const INPUT_SIZE: i64 = 28 * 28;
@@ -89,9 +92,46 @@ fn test(net: &MlpNet, dataset: &Dataset, device: tch::Device) -> f64 {
     sum_acc / test_size as f64
 }
 
+fn myrun() -> Result<(), Box<dyn std::error::Error>> {
+    let dataset = tch::vision::mnist::load_dir("data/mnist")?;
+    let net = basic::MlpNet::new(INPUT_SIZE as usize, HIDDEN_SIZE as usize, N_CLASSED as usize);
+    let opt = basic::SgdOptimizer::new(net.parameters(), LINEAR_RATE);
+    for epoch in 1..=EPOCHS {
+        for (bimages, blabels) in dataset.train_iter(64).shuffle() {
+            let logits = net.forward(Rc::new(RefCell::new(basic::Tensor::from(bimages))));
+            let blabels = basic::to_one_hot(&blabels, N_CLASSED);
+            let loss = log_softmax_cross_entropy(logits, basic::Tensor::new(blabels));
+            opt.zero_grad();
+            basic::Tensor::backward(&loss);
+            opt.step();
+        }
+        println!("Epoch: {}/{}", epoch, EPOCHS);
+    }
+    println!("Training completed using custom implementation.");
+    let test_acc = mytest(&net, &dataset);
+    println!("Test Accuracy: {:.2}%", test_acc * 100.0);
+    Ok(())
+}
+
+fn mytest(net: &basic::MlpNet, dataset: &Dataset) -> f64 {
+    let test_size = dataset.test_images.size()[0];
+    let mut sum_acc = 0.0;
+    for (bimages, blabels) in dataset.test_iter(64) {
+        let logits = net.forward(Rc::new(RefCell::new(basic::Tensor::from(bimages))));
+        let preds = logits.borrow().argmax();
+        let blabels = basic::to_one_hot(&blabels, N_CLASSED);
+        let correct_preds = basic::Tensor::new(blabels).borrow().argmax();
+        for (i, pred) in preds.iter().enumerate() {
+            if *pred == correct_preds[i] {
+                sum_acc += 1.0;
+            }
+        }
+    }
+    sum_acc / test_size as f64
+}
 
 fn main() {
-    match run() {
+    match myrun() {
         Ok(_) => println!("Training completed successfully."),
         Err(e) => eprintln!("Error during training: {}", e),
     }
