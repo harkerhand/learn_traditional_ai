@@ -116,13 +116,11 @@ mod tests {
         let l = mul(b.clone(), y.clone()); // l = b * y
         assert_eq!(l.borrow().data, 27.0);
         Value::backward(&l);
-        assert_eq!(l.borrow().grad, 1.0);  // dl/dl = 1
-        assert_eq!(b.borrow().grad, 3.0);  // dl/db = y = 3
-        assert_eq!(a.borrow().grad, 3.0);  // dl/da = dl/db * db/da = 3 * 1 = 3
+        assert_eq!(l.borrow().grad, 1.0); // dl/dl = 1
+        assert_eq!(b.borrow().grad, 3.0); // dl/db = y = 3
+        assert_eq!(a.borrow().grad, 3.0); // dl/da = dl/db * db/da = 3 * 1 = 3
         assert_eq!(five.borrow().grad, 3.0); // dl/d5 = dl/db * db/d5 = 3 * 1 = 3
         assert_eq!(x.borrow().grad, 12.0); // dl/dx = 2xy = 2 * 2 * 3 = 12
-        assert_eq!(y.borrow().grad, 9.0);  // dl/dy = x*x + 5 = 4 + 5 = 9
+        assert_eq!(y.borrow().grad, 9.0); // dl/dy = x*x + 5 = 4 + 5 = 9
     }
 }
-
-

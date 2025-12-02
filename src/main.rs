@@ -4,14 +4,14 @@ use crate::basic::log_softmax_cross_entropy;
 use std::cell::RefCell;
 use std::fmt::Debug;
 use std::rc::Rc;
+use tch::Tensor;
 use tch::nn::{Module, OptimizerConfig};
 use tch::vision::dataset::Dataset;
-use tch::Tensor;
 
 const N_CLASSED: i64 = 10;
 const LINEAR_RATE: f64 = 0.01;
-const EPOCHS: i64 = 2;
-const HIDDEN_SIZE: i64 = 4;
+const EPOCHS: i64 = 10;
+const HIDDEN_SIZE: i64 = 512;
 
 const INPUT_SIZE: i64 = 28 * 28;
 
@@ -23,24 +23,9 @@ struct MlpNet {
 }
 impl MlpNet {
     fn new(vs: &tch::nn::Path) -> MlpNet {
-        let fc1 = tch::nn::linear(
-            vs / "fc1",
-            INPUT_SIZE,
-            HIDDEN_SIZE,
-            Default::default(),
-        );
-        let fc2 = tch::nn::linear(
-            vs / "fc2",
-            HIDDEN_SIZE,
-            HIDDEN_SIZE,
-            Default::default(),
-        );
-        let fc3 = tch::nn::linear(
-            vs / "fc3",
-            HIDDEN_SIZE,
-            N_CLASSED,
-            Default::default(),
-        );
+        let fc1 = tch::nn::linear(vs / "fc1", INPUT_SIZE, HIDDEN_SIZE, Default::default());
+        let fc2 = tch::nn::linear(vs / "fc2", HIDDEN_SIZE, HIDDEN_SIZE, Default::default());
+        let fc3 = tch::nn::linear(vs / "fc3", HIDDEN_SIZE, N_CLASSED, Default::default());
         MlpNet { fc1, fc2, fc3 }
     }
 }
@@ -54,13 +39,12 @@ impl Module for MlpNet {
     }
 }
 
-
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let device = tch::Device::cuda_if_available();
     let dataset = tch::vision::mnist::load_dir("data/mnist")?;
     let vs = tch::nn::VarStore::new(device);
     let net = MlpNet::new(&vs.root());
-    let mut opt = tch::nn::Sgd::default().build(&vs, LINEAR_RATE)?;
+    let mut opt = tch::nn::Adam::default().build(&vs, LINEAR_RATE)?;
     for epoch in 1..=EPOCHS {
         for (bimages, blabels) in dataset.train_iter(64).shuffle().to_device(device) {
             let logits = net.forward(&bimages);
@@ -86,7 +70,10 @@ fn test(net: &MlpNet, dataset: &Dataset, device: tch::Device) -> f64 {
         let logits = net.forward(&bimages);
         let preds = logits.argmax(Some(1), false);
         let correct_preds = preds.eq_tensor(&blabels);
-        let batch_acc = correct_preds.to_kind(tch::Kind::Float).mean(tch::Kind::Float).double_value(&[]);
+        let batch_acc = correct_preds
+            .to_kind(tch::Kind::Float)
+            .mean(tch::Kind::Float)
+            .double_value(&[]);
         sum_acc += batch_acc * bimages.size()[0] as f64;
     }
     sum_acc / test_size as f64
@@ -94,8 +81,13 @@ fn test(net: &MlpNet, dataset: &Dataset, device: tch::Device) -> f64 {
 
 fn myrun() -> Result<(), Box<dyn std::error::Error>> {
     let dataset = tch::vision::mnist::load_dir("data/mnist")?;
-    let net = basic::MlpNet::new(INPUT_SIZE as usize, HIDDEN_SIZE as usize, N_CLASSED as usize);
-    let opt = basic::SgdOptimizer::new(net.parameters(), LINEAR_RATE);
+    let net = basic::MlpNet::new(&[
+        INPUT_SIZE as usize,
+        HIDDEN_SIZE as usize,
+        HIDDEN_SIZE as usize,
+        N_CLASSED as usize,
+    ]);
+    let mut opt = basic::AdamOptimizer::new(net.parameters(), LINEAR_RATE, 0.9, 0.999, 1e-8);
     for epoch in 1..=EPOCHS {
         for (bimages, blabels) in dataset.train_iter(64).shuffle() {
             let logits = net.forward(Rc::new(RefCell::new(basic::Tensor::from(bimages))));
@@ -136,5 +128,3 @@ fn main() {
         Err(e) => eprintln!("Error during training: {}", e),
     }
 }
-
-

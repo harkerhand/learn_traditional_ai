@@ -6,7 +6,6 @@ use std::rc::Rc;
 pub type NdTensor = ArrayBase<OwnedRepr<f64>, Dim<IxDynImpl>>;
 pub type SharedTensor = Rc<RefCell<Tensor>>;
 
-
 pub struct Tensor {
     pub data: NdTensor,
     pub grad: NdTensor,
@@ -43,18 +42,16 @@ impl Tensor {
 }
 
 pub fn add(a: SharedTensor, b: SharedTensor) -> SharedTensor {
-    let a_data = a.borrow().data.clone();
-    let b_data = b.borrow().data.clone();
-    let out = Tensor::new(&a_data + &b_data);
+    let out = Tensor::new(&a.borrow().data + &b.borrow().data);
     out.borrow_mut().children.push(a.clone());
     out.borrow_mut().children.push(b.clone());
     let out_clone = out.clone();
     out.borrow_mut().backward_fn = Some(Box::new(move || {
         let out_grad = out_clone.borrow().grad.clone();
         a.borrow_mut().grad += &out_grad;
-        let b_shape = b_data.raw_dim();
+        let b_shape = b.borrow().data.raw_dim();
         if out_grad.raw_dim() != b_shape {
-            let summed_grad = out_grad.sum_axis(ndarray::Axis(0));
+            let summed_grad = out_grad.sum_axis(Axis(0));
             let reshaped_grad = summed_grad.into_shape_with_order(b_shape).unwrap();
             b.borrow_mut().grad += &reshaped_grad;
         } else {
@@ -66,49 +63,43 @@ pub fn add(a: SharedTensor, b: SharedTensor) -> SharedTensor {
 }
 
 pub fn mul(a: SharedTensor, b: SharedTensor) -> SharedTensor {
-    let a_data = a.borrow().data.clone();
-    let b_data = b.borrow().data.clone();
-    let out = Tensor::new(&a_data * &b_data);
-
+    let out = Tensor::new(&a.borrow().data * &b.borrow().data);
     out.borrow_mut().children.push(a.clone());
     out.borrow_mut().children.push(b.clone());
     let out_clone = out.clone();
     out.borrow_mut().backward_fn = Some(Box::new(move || {
         let out_grad = out_clone.borrow().grad.clone();
-        a.borrow_mut().grad += &(&out_grad * &b_data);
-        b.borrow_mut().grad += &(&out_grad * &a_data);
+        a.borrow_mut().grad += &(&out_grad * &b.borrow().data);
+        b.borrow_mut().grad += &(&out_grad * &a.borrow().data);
     }));
 
     out
 }
 
 pub fn mat_mul(a: SharedTensor, b: SharedTensor) -> SharedTensor {
-    let a_data = a.borrow().data.clone();
-    let b_data = b.borrow().data.clone();
-    let out = Tensor::new(a_data.dot(&b_data));
+    let out = Tensor::new(a.borrow().data.dot(&b.borrow().data));
 
     out.borrow_mut().children.push(a.clone());
     out.borrow_mut().children.push(b.clone());
     let out_clone = out.clone();
     out.borrow_mut().backward_fn = Some(Box::new(move || {
         let out_grad = out_clone.borrow().grad.clone();
-        a.borrow_mut().grad += &out_grad.dot(&b_data.t());
-        b.borrow_mut().grad += &a_data.t().dot(&out_grad);
+        a.borrow_mut().grad += &out_grad.dot(&b.borrow().data.t());
+        b.borrow_mut().grad += &a.borrow().data.t().dot(&out_grad);
     }));
 
     out
 }
 
 pub fn relu(a: SharedTensor) -> SharedTensor {
-    let a_data = a.borrow().data.clone();
-    let out_data = a_data.mapv(|x| if x > 0.0 { x } else { 0.0 });
+    let out_data = a.borrow().data.mapv(|x| if x > 0.0 { x } else { 0.0 });
     let out = Tensor::new(out_data);
 
     out.borrow_mut().children.push(a.clone());
     let out_clone = out.clone();
     out.borrow_mut().backward_fn = Some(Box::new(move || {
         let out_grad = out_clone.borrow().grad.clone();
-        let relu_grad = a_data.mapv(|x| if x > 0.0 { 1.0 } else { 0.0 });
+        let relu_grad = a.borrow().data.mapv(|x| if x > 0.0 { 1.0 } else { 0.0 });
         a.borrow_mut().grad += &(&out_grad * &relu_grad);
     }));
 
@@ -116,16 +107,15 @@ pub fn relu(a: SharedTensor) -> SharedTensor {
 }
 
 pub fn mean(a: SharedTensor) -> SharedTensor {
-    let a_data = a.borrow().data.clone();
-    let mean_value = a_data.mean().unwrap();
+    let mean_value = a.borrow().data.mean().unwrap();
     let out = Tensor::new(NdTensor::from_elem(IxDyn(&[]), mean_value));
 
     out.borrow_mut().children.push(a.clone());
     let out_clone = out.clone();
     out.borrow_mut().backward_fn = Some(Box::new(move || {
         let out_grad = out_clone.borrow().grad.clone();
-        let a_shape = a_data.raw_dim();
-        let num_elements = a_data.len() as f64;
+        let a_shape = a.borrow().data.raw_dim();
+        let num_elements = a.borrow().data.len() as f64;
         let grad_contribution = out_grad[[]] / num_elements;
         a.borrow_mut().grad += &NdTensor::from_elem(a_shape, grad_contribution);
     }));
@@ -133,27 +123,28 @@ pub fn mean(a: SharedTensor) -> SharedTensor {
 }
 
 pub fn log_softmax_cross_entropy(z: SharedTensor, y: SharedTensor) -> SharedTensor {
-    // println!("{:?}, {:?}", z.borrow().data.raw_dim(), y.borrow().data.raw_dim());
-    let z_data = z.borrow().data.clone();
-    let y_data = y.borrow().data.clone();
-    let batch_size = z_data.shape()[0] as f64;
-    let z_max = z_data.fold_axis(Axis(1), f64::NEG_INFINITY, |&a, &b| a.max(b));
-    let z_shifted = &z_data - &z_max.insert_axis(Axis(1));
+    let batch_size = z.borrow().data.shape()[0] as f64;
+    let z_max = z
+        .borrow()
+        .data
+        .fold_axis(Axis(1), f64::NEG_INFINITY, |&a, &b| a.max(b));
+    let z_shifted = &z.borrow().data - &z_max.insert_axis(Axis(1));
     let exp_z = z_shifted.mapv(|x| x.exp());
     let sum_exp_z = exp_z.sum_axis(Axis(1)).insert_axis(Axis(1));
 
     let y_hat = exp_z / sum_exp_z;
     let log_y_hat = y_hat.mapv(|x| x.max(1e-12).ln());
-    let loss_terms = &y_data * &log_y_hat;
+    let loss_terms = &y.borrow().data * &log_y_hat;
     let sample_losses = loss_terms.sum_axis(Axis(1)).mapv(|x| -x);
     let mean_loss = sample_losses.mean().unwrap();
     let out = Tensor::new(NdTensor::from_elem(IxDyn(&[]), mean_loss));
+    let y_hat = Tensor::new(y_hat);
     out.borrow_mut().children.push(z.clone());
     let out_clone = out.clone();
     out.borrow_mut().backward_fn = Some(Box::new(move || {
         let out_grad = out_clone.borrow().grad.clone();
 
-        let z_grad = (&y_hat - &y_data) / batch_size;
+        let z_grad = (&y_hat.borrow().data - &y.borrow().data) / batch_size;
         z.borrow_mut().grad += &(&z_grad * out_grad[[]]);
     }));
     out
@@ -183,13 +174,15 @@ impl Tensor {
 
         // 初始化输出节点的梯度为 1.0
         let dim = self_rc.borrow().data.raw_dim();
-        self_rc.borrow_mut().grad = NdTensor::ones(dim);
+        self_rc.borrow_mut().grad.fill(1.0);
         // 反向遍历拓扑排序的节点，执行后向函数
         for node in topo.into_iter().rev() {
             let node_ptr: *const _ = Rc::as_ptr(&node);
             if let Some(ref backward_fn) = node.borrow().backward_fn {
                 backward_fn();
             }
+            node.borrow_mut().children.clear();
+            node.borrow_mut().backward_fn = None;
         }
     }
 }
@@ -205,7 +198,7 @@ impl From<tch::Tensor> for Tensor {
             value.size().iter().map(|&d| d as usize).collect::<Vec<_>>(),
             vec.into_iter().map(|x| x as f64).collect(),
         )
-            .unwrap();
+        .unwrap();
         let dim = array_d.raw_dim();
         Tensor {
             data: array_d,
@@ -260,23 +253,47 @@ mod tests {
 
     #[test]
     fn test_real_eg() {
-        let input_data = NdTensor::from_shape_vec(IxDyn(&[1, 4]), vec![1.0, -2.0, 3.0, -4.0]).unwrap();
-        let weights_data = NdTensor::from_shape_vec(IxDyn(&[4, 2]), vec![1.0, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, -1.0]).unwrap();
+        let input_data =
+            NdTensor::from_shape_vec(IxDyn(&[1, 4]), vec![1.0, -2.0, 3.0, -4.0]).unwrap();
+        let weights_data = NdTensor::from_shape_vec(
+            IxDyn(&[4, 2]),
+            vec![1.0, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, -1.0],
+        )
+        .unwrap();
         let input = Tensor::new(input_data);
         let weights = Tensor::new(weights_data);
         let logits = mat_mul(input.clone(), weights.clone()); // logits = input @ weights
-        assert_eq!(logits.borrow().data, NdTensor::from_shape_vec(IxDyn(&[1, 2]), vec![-2.0, 2.0]).unwrap());
+        assert_eq!(
+            logits.borrow().data,
+            NdTensor::from_shape_vec(IxDyn(&[1, 2]), vec![-2.0, 2.0]).unwrap()
+        );
         let activated = relu(logits.clone()); // activated = relu(logits)
-        assert_eq!(activated.borrow().data, NdTensor::from_shape_vec(IxDyn(&[1, 2]), vec![0.0, 2.0]).unwrap());
+        assert_eq!(
+            activated.borrow().data,
+            NdTensor::from_shape_vec(IxDyn(&[1, 2]), vec![0.0, 2.0]).unwrap()
+        );
         Tensor::backward(&activated);
         let activated_grad = &activated.borrow().grad; // dactivated/dactivated = 1
         assert_eq!(activated_grad, &NdTensor::from_elem(IxDyn(&[1, 2]), 1.0));
         let logits_grad = &logits.borrow().grad; // dactivated/dlogits = [0, 1]
-        assert_eq!(logits_grad, &NdTensor::from_shape_vec(IxDyn(&[1, 2]), vec![0.0, 1.0]).unwrap());
+        assert_eq!(
+            logits_grad,
+            &NdTensor::from_shape_vec(IxDyn(&[1, 2]), vec![0.0, 1.0]).unwrap()
+        );
         let input_grad = &input.borrow().grad; // dactivated/dinput = logits_grad @ weights.T = [0, 1, 0, -1]
-        assert_eq!(input_grad, &NdTensor::from_shape_vec(IxDyn(&[1, 4]), vec![0.0, 1.0, 0.0, -1.0]).unwrap());
+        assert_eq!(
+            input_grad,
+            &NdTensor::from_shape_vec(IxDyn(&[1, 4]), vec![0.0, 1.0, 0.0, -1.0]).unwrap()
+        );
         let weights_grad = &weights.borrow().grad; // dactivated/dweights = input.T @ logits_grad = [0, 1, 0, -2, 0, 3, 0, -4]
-        assert_eq!(weights_grad, &NdTensor::from_shape_vec(IxDyn(&[4, 2]), vec![0.0, 1.0, 0.0, -2.0, 0.0, 3.0, 0.0, -4.0]).unwrap());
+        assert_eq!(
+            weights_grad,
+            &NdTensor::from_shape_vec(
+                IxDyn(&[4, 2]),
+                vec![0.0, 1.0, 0.0, -2.0, 0.0, 3.0, 0.0, -4.0]
+            )
+            .unwrap()
+        );
     }
 
     #[test]
@@ -292,13 +309,25 @@ mod tests {
         let b = Tensor::new(b_data);
         let m = Tensor::new(m_data);
         let xw = mat_mul(x.clone(), w.clone()); // XW =  X @ W
-        assert_eq!(xw.borrow().data, NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![1.0, 2.0, 3.0, 4.0]).unwrap());
+        assert_eq!(
+            xw.borrow().data,
+            NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![1.0, 2.0, 3.0, 4.0]).unwrap()
+        );
         let z = add(xw.clone(), b.clone()); // Z = XW + B
-        assert_eq!(z.borrow().data, NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![-2.0, 0.0, 0.0, 2.0]).unwrap());
+        assert_eq!(
+            z.borrow().data,
+            NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![-2.0, 0.0, 0.0, 2.0]).unwrap()
+        );
         let a = relu(z.clone()); // A = ReLU(Z)
-        assert_eq!(a.borrow().data, NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![0.0, 0.0, 0.0, 2.0]).unwrap());
+        assert_eq!(
+            a.borrow().data,
+            NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![0.0, 0.0, 0.0, 2.0]).unwrap()
+        );
         let c = mul(a.clone(), m.clone()); // C = A * M
-        assert_eq!(c.borrow().data, NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![0.0, 0.0, 0.0, 1.0]).unwrap());
+        assert_eq!(
+            c.borrow().data,
+            NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![0.0, 0.0, 0.0, 1.0]).unwrap()
+        );
         let l = mean(c.clone()); // mean(C)
         assert_eq!(l.borrow().data, NdTensor::from_elem(IxDyn(&[]), 0.25));
         Tensor::backward(&l);
@@ -307,17 +336,35 @@ mod tests {
         let c_grad = &c.borrow().grad; // dl/dc = 1/4
         assert_eq!(c_grad, &NdTensor::from_elem(IxDyn(&[2, 2]), 0.25));
         let a_grad = &a.borrow().grad; // dl/da = dl/dc * dc/da = 0.25 * M
-        assert_eq!(a_grad, &NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![0.125, 0.25, 0.25, 0.125]).unwrap());
+        assert_eq!(
+            a_grad,
+            &NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![0.125, 0.25, 0.25, 0.125]).unwrap()
+        );
         let z_grad = &z.borrow().grad; // dl/dz = dl/da * da/dz
-        assert_eq!(z_grad, &NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![0.0, 0.0, 0.0, 0.125]).unwrap());
+        assert_eq!(
+            z_grad,
+            &NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![0.0, 0.0, 0.0, 0.125]).unwrap()
+        );
         let xw_grad = &xw.borrow().grad; // dl/dxw = dl/dz * dz/dxw = dl/dz
-        assert_eq!(xw_grad, &NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![0.0, 0.0, 0.0, 0.125]).unwrap());
+        assert_eq!(
+            xw_grad,
+            &NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![0.0, 0.0, 0.0, 0.125]).unwrap()
+        );
         let b_grad = &b.borrow().grad; // dl/db = dl/dz * dz/db = sum over batch of dl/dz
-        assert_eq!(b_grad, &NdTensor::from_shape_vec(IxDyn(&[2]), vec![0.0, 0.125]).unwrap());
+        assert_eq!(
+            b_grad,
+            &NdTensor::from_shape_vec(IxDyn(&[2]), vec![0.0, 0.125]).unwrap()
+        );
         let x_grad = &x.borrow().grad; // dl/dx = dl/dxw * dxw/dx = dl/dxw @ W.T
-        assert_eq!(x_grad, &NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![0.0, 0.0, 0.0, 0.125]).unwrap());
+        assert_eq!(
+            x_grad,
+            &NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![0.0, 0.0, 0.0, 0.125]).unwrap()
+        );
         let w_grad = &w.borrow().grad; // dl/dw = x.T @ dl/dxw
-        assert_eq!(w_grad, &NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![0.0, 0.375, 0.0, 0.5]).unwrap());
+        assert_eq!(
+            w_grad,
+            &NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![0.0, 0.375, 0.0, 0.5]).unwrap()
+        );
     }
 
     #[test]
@@ -333,6 +380,15 @@ mod tests {
         assert_eq!(l_grad, &NdTensor::from_elem(IxDyn(&[]), 1.0));
         let z_grad = &z.borrow().grad;
         println!("z_grad: {:?}", z_grad);
-        assert!((z_grad - &NdTensor::from_shape_vec(IxDyn(&[2, 2]), vec![0.059602, -0.059602, -0.440399, 0.440399]).unwrap()).iter().all(|x| x.abs() < 1e-6));
+        assert!(
+            (z_grad
+                - &NdTensor::from_shape_vec(
+                    IxDyn(&[2, 2]),
+                    vec![0.059602, -0.059602, -0.440399, 0.440399]
+                )
+                .unwrap())
+                .iter()
+                .all(|x| x.abs() < 1e-6)
+        );
     }
 }
